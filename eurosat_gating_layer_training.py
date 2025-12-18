@@ -17,7 +17,7 @@ import torch.utils.data
 from torchvision import transforms
 from torch.utils.data import Dataset
 
-BATCH_SIZE = 512
+BATCH_SIZE = 256
 baseimgdir = "./input/6/EuroSAT"
 
 load_transform = transforms.Compose([
@@ -936,13 +936,13 @@ summary(strict_cnn, input_size=(BATCH_SIZE, 3, 64, 64))
 # path_accuracies = {}
 
 
-# print("\n=== STRICT PATH FEDERATED LEARNING (DATA SHARDS) ===")
-# num_clients = 9
-# path_clients = create_data_shard_clients(strict_cnn, device, num_clients=num_clients)
-
-print("\n=== STRICT PATH FEDERATED LEARNING (FULL DATA PER CLIENT) ===")
+print("\n=== STRICT PATH FEDERATED LEARNING (DATA SHARDS) ===")
 num_clients = 9
-path_clients = create_full_data_clients(strict_cnn, device, num_clients=num_clients)
+path_clients = create_data_shard_clients(strict_cnn, device, num_clients=num_clients)
+
+# print("\n=== STRICT PATH FEDERATED LEARNING (FULL DATA PER CLIENT) ===")
+# num_clients = 9
+# path_clients = create_full_data_clients(strict_cnn, device, num_clients=num_clients)
 
 
 from collections import Counter
