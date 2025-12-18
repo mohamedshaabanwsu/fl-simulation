@@ -1,0 +1,154 @@
+Using device: cuda
+==========================================================================================
+Layer (type:depth-idx)                   Output Shape              Param #
+==========================================================================================
+StrictGatedCNN                           [512, 10]                 14,960,515
+├─Linear: 1-1                            [512, 64]                 786,496
+├─Linear: 1-2                            [512, 3]                  195
+├─BatchNorm2d: 1-3                       [512, 512, 64, 64]        1,024
+├─MaxPool2d: 1-4                         [512, 512, 32, 32]        --
+├─BatchNorm2d: 1-5                       [512, 512, 32, 32]        1,024
+├─MaxPool2d: 1-6                         [512, 512, 16, 16]        --
+├─BatchNorm2d: 1-7                       [512, 512, 16, 16]        1,024
+├─MaxPool2d: 1-8                         [512, 512, 8, 8]          --
+├─BatchNorm2d: 1-9                       [512, 512, 8, 8]          1,024
+├─MaxPool2d: 1-10                        [512, 512, 4, 4]          --
+├─BatchNorm2d: 1-11                      [512, 512, 4, 4]          1,024
+├─MaxPool2d: 1-12                        [512, 512, 2, 2]          --
+├─BatchNorm2d: 1-13                      [512, 512, 2, 2]          1,024
+├─BatchNorm2d: 1-14                      [512, 512, 2, 2]          1,024
+├─AdaptiveAvgPool2d: 1-15                [512, 171, 1, 1]          --
+├─Linear: 1-16                           [512, 1024]               525,312
+├─Linear: 1-17                           [512, 512]                524,800
+├─Linear: 1-18                           [512, 10]                 5,130
+├─AdaptiveAvgPool2d: 1-19                [512, 171, 1, 1]          --
+├─Linear: 1-20                           [512, 1024]               (recursive)
+├─Linear: 1-21                           [512, 512]                (recursive)
+├─Linear: 1-22                           [512, 10]                 (recursive)
+├─AdaptiveAvgPool2d: 1-23                [512, 170, 1, 1]          --
+├─Linear: 1-24                           [512, 1024]               (recursive)
+├─Linear: 1-25                           [512, 512]                (recursive)
+├─Linear: 1-26                           [512, 10]                 (recursive)
+==========================================================================================
+Total params: 16,809,616
+Trainable params: 16,809,616
+Non-trainable params: 0
+Total mult-adds (G): 2.03
+==========================================================================================
+Input size (MB): 25.17
+Forward/backward pass size (MB): 11478.11
+Params size (MB): 7.40
+Estimated Total Size (MB): 11510.67
+==========================================================================================
+
+=== STRICT PATH FEDERATED LEARNING (FULL DATA PER CLIENT) ===
+
+=== CLIENT CLASS STATS ===
+client1: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+client2: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+client3: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+client4: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+client5: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+client6: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+client7: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+client8: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+client9: 18900 samples, labels ~ (classes [0 1 2 3 4 5 6 7 8 9], counts [2100 2100 2100 1750 1750 1400 1750 2100 1750 2100])
+Training client1 on its local shard (with gate reg)...
+client1 epoch 1/10 val accuracy: 59.33%
+client1 epoch 2/10 val accuracy: 65.85%
+client1 epoch 3/10 val accuracy: 70.52%
+client1 epoch 4/10 val accuracy: 71.61%
+client1 epoch 5/10 val accuracy: 80.13%
+client1 epoch 6/10 val accuracy: 80.69%
+client1 epoch 7/10 val accuracy: 74.33%
+client1 epoch 8/10 val accuracy: 82.22%
+client1 epoch 9/10 val accuracy: 77.70%
+client1 epoch 10/10 val accuracy: 78.94%
+client1 final test accuracy: 78.96%
+Training client2 on its local shard (with gate reg)...
+client2 epoch 1/10 val accuracy: 57.13%
+client2 epoch 2/10 val accuracy: 69.93%
+client2 epoch 3/10 val accuracy: 55.98%
+client2 epoch 4/10 val accuracy: 61.07%
+client2 epoch 5/10 val accuracy: 65.63%
+client2 epoch 6/10 val accuracy: 74.19%
+client2 epoch 7/10 val accuracy: 71.59%
+client2 epoch 8/10 val accuracy: 83.44%
+client2 epoch 9/10 val accuracy: 85.00%
+client2 epoch 10/10 val accuracy: 67.57%
+client2 final test accuracy: 68.89%
+Training client3 on its local shard (with gate reg)...
+client3 epoch 1/10 val accuracy: 54.02%
+client3 epoch 2/10 val accuracy: 59.28%
+client3 epoch 3/10 val accuracy: 72.91%
+client3 epoch 4/10 val accuracy: 79.48%
+client3 epoch 5/10 val accuracy: 84.02%
+client3 epoch 6/10 val accuracy: 84.24%
+client3 epoch 7/10 val accuracy: 79.17%
+client3 epoch 8/10 val accuracy: 84.63%
+client3 epoch 9/10 val accuracy: 76.70%
+client3 epoch 10/10 val accuracy: 87.57%
+client3 final test accuracy: 87.59%
+Training client4 on its local shard (with gate reg)...
+client4 epoch 1/10 val accuracy: 46.65%
+client4 epoch 2/10 val accuracy: 71.85%
+client4 epoch 3/10 val accuracy: 68.94%
+client4 epoch 4/10 val accuracy: 73.20%
+client4 epoch 5/10 val accuracy: 78.37%
+client4 epoch 6/10 val accuracy: 79.30%
+client4 epoch 7/10 val accuracy: 79.69%
+client4 epoch 8/10 val accuracy: 82.11%
+client4 epoch 9/10 val accuracy: 84.59%
+client4 epoch 10/10 val accuracy: 79.41%
+client4 final test accuracy: 78.70%
+Training client5 on its local shard (with gate reg)...
+client5 epoch 1/10 val accuracy: 44.17%
+client5 epoch 2/10 val accuracy: 70.57%
+client5 epoch 3/10 val accuracy: 69.91%
+client5 epoch 4/10 val accuracy: 69.63%
+client5 epoch 5/10 val accuracy: 69.94%
+client5 epoch 6/10 val accuracy: 72.46%
+client5 epoch 7/10 val accuracy: 81.69%
+client5 epoch 8/10 val accuracy: 80.72%
+client5 epoch 9/10 val accuracy: 74.63%
+client5 epoch 10/10 val accuracy: 80.22%
+client5 final test accuracy: 80.00%
+Training client6 on its local shard (with gate reg)...
+client6 epoch 1/10 val accuracy: 52.98%
+client6 epoch 2/10 val accuracy: 65.83%
+client6 epoch 3/10 val accuracy: 72.76%
+client6 epoch 4/10 val accuracy: 54.48%
+client6 epoch 5/10 val accuracy: 62.11%
+client6 epoch 6/10 val accuracy: 63.78%
+client6 epoch 7/10 val accuracy: 68.91%
+client6 epoch 8/10 val accuracy: 67.50%
+client6 epoch 9/10 val accuracy: 70.76%
+client6 epoch 10/10 val accuracy: 83.09%
+client6 final test accuracy: 84.11%
+Training client7 on its local shard (with gate reg)...
+client7 epoch 1/10 val accuracy: 52.96%
+client7 epoch 2/10 val accuracy: 70.13%
+client7 epoch 3/10 val accuracy: 73.67%
+client7 epoch 4/10 val accuracy: 73.15%
+client7 epoch 5/10 val accuracy: 73.98%
+client7 epoch 6/10 val accuracy: 76.31%
+client7 epoch 7/10 val accuracy: 84.83%
+client7 epoch 8/10 val accuracy: 76.22%
+client7 epoch 9/10 val accuracy: 86.91%
+client7 epoch 10/10 val accuracy: 82.67%
+client7 final test accuracy: 82.63%
+Training client8 on its local shard (with gate reg)...
+client8 epoch 1/10 val accuracy: 51.61%
+client8 epoch 2/10 val accuracy: 70.56%
+client8 epoch 3/10 val accuracy: 74.46%
+client8 epoch 4/10 val accuracy: 77.09%
+client8 epoch 5/10 val accuracy: 60.65%
+client8 epoch 6/10 val accuracy: 75.13%
+client8 epoch 7/10 val accuracy: 73.80%
+client8 epoch 8/10 val accuracy: 69.93%
+client8 epoch 9/10 val accuracy: 76.00%
+client8 epoch 10/10 val accuracy: 81.41%
+client8 final test accuracy: 82.15%
+Training client9 on its local shard (with gate reg)...
+client9 epoch 1/10 val accuracy: 50.13%
+client9 epoch 2/10 val accuracy: 69.78%
