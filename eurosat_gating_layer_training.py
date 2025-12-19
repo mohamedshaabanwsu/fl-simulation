@@ -17,7 +17,7 @@ import torch.utils.data
 from torchvision import transforms
 from torch.utils.data import Dataset
 
-BATCH_SIZE = 256
+BATCH_SIZE = 768
 baseimgdir = "./input/6/EuroSAT"
 
 load_transform = transforms.Compose([
@@ -394,62 +394,62 @@ def evaluate_global_per_expert(global_model, loader, device):
         results[path_name] = acc
     return results
 
-# def create_data_shard_clients(base_model, device, num_clients=3):
-#     """
-#     Create num_clients clients as random data shards of the full train set.
-#     Each client sees all labels 0–9, just different samples.
-#     """
-#     n = len(train)
-#     indices = torch.randperm(n)
-#     shard_size = n // num_clients
-    
-#     clients = {}
-#     for i in range(num_clients):
-#         start = i * shard_size
-#         end = (i + 1) * shard_size if i < num_clients - 1 else n
-#         client_indices = indices[start:end]
-        
-#         client_dataset = torch.utils.data.Subset(train, client_indices)
-#         client_loader = torch.utils.data.DataLoader(
-#             client_dataset, batch_size=BATCH_SIZE, shuffle=True
-#         )
-        
-#         client_model = copy.deepcopy(base_model)
-#         clients[f'client{i+1}'] = {
-#             'model': client_model,
-#             'loader': client_loader
-#         }
-#     return clients
-
-def create_data_shard_clients(base_model, device, num_clients=9):
-    clients = {}
+def create_data_shard_clients(base_model, device, num_clients=3):
+    """
+    Create num_clients clients as random data shards of the full train set.
+    Each client sees all labels 0–9, just different samples.
+    """
     n = len(train)
     indices = torch.randperm(n)
     shard_size = n // num_clients
-
+    
+    clients = {}
     for i in range(num_clients):
         start = i * shard_size
         end = (i + 1) * shard_size if i < num_clients - 1 else n
         client_indices = indices[start:end]
+        
         client_dataset = torch.utils.data.Subset(train, client_indices)
         client_loader = torch.utils.data.DataLoader(
             client_dataset, batch_size=BATCH_SIZE, shuffle=True
         )
-
-        client_model = copy.deepcopy(base_model).to(device)
-
-        # freeze gate; only experts (conv) + head will train locally
-        set_gate_trainable(client_model, False)
-        set_conv_trainable(client_model, True)
-        set_head_trainable(client_model, True)
-        freeze_bn_affine(client_model)   # optional
-
-        clients[f"client{i+1}"] = {
-            "model": client_model,
-            "loader": client_loader,
+        
+        client_model = copy.deepcopy(base_model)
+        clients[f'client{i+1}'] = {
+            'model': client_model,
+            'loader': client_loader
         }
-
     return clients
+
+# def create_data_shard_clients(base_model, device, num_clients=9):
+#     clients = {}
+#     n = len(train)
+#     indices = torch.randperm(n)
+#     shard_size = n // num_clients
+
+#     for i in range(num_clients):
+#         start = i * shard_size
+#         end = (i + 1) * shard_size if i < num_clients - 1 else n
+#         client_indices = indices[start:end]
+#         client_dataset = torch.utils.data.Subset(train, client_indices)
+#         client_loader = torch.utils.data.DataLoader(
+#             client_dataset, batch_size=BATCH_SIZE, shuffle=True
+#         )
+
+#         client_model = copy.deepcopy(base_model).to(device)
+
+#         # freeze gate; only experts (conv) + head will train locally
+#         set_gate_trainable(client_model, False)
+#         set_conv_trainable(client_model, True)
+#         set_head_trainable(client_model, True)
+#         freeze_bn_affine(client_model)   # optional
+
+#         clients[f"client{i+1}"] = {
+#             "model": client_model,
+#             "loader": client_loader,
+#         }
+
+#     return clients
 
 def create_full_data_clients(base_model, device, num_clients=3):
     """
@@ -1077,13 +1077,13 @@ summary(strict_cnn, input_size=(BATCH_SIZE, 3, 64, 64))
 print("\n=== SERVER-SIDE GATE PRETRAINING ===")
 server_pretrain_gate(strict_cnn, train_loader, device, num_epochs=30, lam_gate=0.1)
 
-print("\n=== STRICT PATH FEDERATED LEARNING (DATA SHARDS) ===")
-num_clients = 9
-path_clients = create_data_shard_clients(strict_cnn, device, num_clients=num_clients)
-
-# print("\n=== STRICT PATH FEDERATED LEARNING (FULL DATA PER CLIENT) ===")
+# print("\n=== STRICT PATH FEDERATED LEARNING (DATA SHARDS) ===")
 # num_clients = 9
-# path_clients = create_full_data_clients(strict_cnn, device, num_clients=num_clients)
+# path_clients = create_data_shard_clients(strict_cnn, device, num_clients=num_clients)
+
+print("\n=== STRICT PATH FEDERATED LEARNING (FULL DATA PER CLIENT) ===")
+num_clients = 9
+path_clients = create_full_data_clients(strict_cnn, device, num_clients=num_clients)
 
 from collections import Counter
 
@@ -1111,7 +1111,7 @@ print("\n=== CLIENT CLASS STATS ===")
 print_client_class_stats(path_clients, train)
 
 path_accuracies = {}
-NUM_LOCAL_EPOCHS = 10
+NUM_LOCAL_EPOCHS = 3
 CLIENT_LR = 0.0005
 LAMBDA_GATE = 0.1   # strength of class→path gate regularization
 # LAMBDA_GATE = 0.05  # strength of class→path gate regularization
@@ -1151,6 +1151,9 @@ for client_name, client_info in path_clients.items():
     print(f"{client_name} final test accuracy: {path_accuracies[client_name]:.2f}%")
 
 
+
+
+
 # After local training of all 9 clients
 print("\n=== BUILD INITIAL GLOBAL MODEL BY FEDAVG OVER TRAINED CLIENTS ===")
 # 1) Collect state_dicts from all clients
@@ -1175,6 +1178,9 @@ global_model.load_state_dict(global_state)
 
 acc_after_initial_globale_model = evaluate_model_gpu(global_model, test_loader, device)
 print(f"Accuracy after INITIAL GLOBAL MODEL: {acc_after_initial_globale_model:.2f}%")
+
+
+
 
 
 # print("\n=== FEDERATED GATE-ONLY FINE-TUNING (PRE-EXPERT) ===")
