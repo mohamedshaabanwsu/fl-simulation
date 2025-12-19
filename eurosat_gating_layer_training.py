@@ -394,31 +394,61 @@ def evaluate_global_per_expert(global_model, loader, device):
         results[path_name] = acc
     return results
 
-def create_data_shard_clients(base_model, device, num_clients=3):
-    """
-    Create num_clients clients as random data shards of the full train set.
-    Each client sees all labels 0–9, just different samples.
-    """
+# def create_data_shard_clients(base_model, device, num_clients=3):
+#     """
+#     Create num_clients clients as random data shards of the full train set.
+#     Each client sees all labels 0–9, just different samples.
+#     """
+#     n = len(train)
+#     indices = torch.randperm(n)
+#     shard_size = n // num_clients
+    
+#     clients = {}
+#     for i in range(num_clients):
+#         start = i * shard_size
+#         end = (i + 1) * shard_size if i < num_clients - 1 else n
+#         client_indices = indices[start:end]
+        
+#         client_dataset = torch.utils.data.Subset(train, client_indices)
+#         client_loader = torch.utils.data.DataLoader(
+#             client_dataset, batch_size=BATCH_SIZE, shuffle=True
+#         )
+        
+#         client_model = copy.deepcopy(base_model)
+#         clients[f'client{i+1}'] = {
+#             'model': client_model,
+#             'loader': client_loader
+#         }
+#     return clients
+
+def create_data_shard_clients(base_model, device, num_clients=9):
+    clients = {}
     n = len(train)
     indices = torch.randperm(n)
     shard_size = n // num_clients
-    
-    clients = {}
+
     for i in range(num_clients):
         start = i * shard_size
         end = (i + 1) * shard_size if i < num_clients - 1 else n
         client_indices = indices[start:end]
-        
         client_dataset = torch.utils.data.Subset(train, client_indices)
         client_loader = torch.utils.data.DataLoader(
             client_dataset, batch_size=BATCH_SIZE, shuffle=True
         )
-        
-        client_model = copy.deepcopy(base_model)
-        clients[f'client{i+1}'] = {
-            'model': client_model,
-            'loader': client_loader
+
+        client_model = copy.deepcopy(base_model).to(device)
+
+        # freeze gate; only experts (conv) + head will train locally
+        set_gate_trainable(client_model, False)
+        set_conv_trainable(client_model, True)
+        set_head_trainable(client_model, True)
+        freeze_bn_affine(client_model)   # optional
+
+        clients[f"client{i+1}"] = {
+            "model": client_model,
+            "loader": client_loader,
         }
+
     return clients
 
 def create_full_data_clients(base_model, device, num_clients=3):
@@ -511,6 +541,19 @@ def analyze_final_gating(model, test_loader, device):
                 f"P0:{avg_gates[0]:.3f} P1:{avg_gates[1]:.3f} P2:{avg_gates[2]:.3f}"
             )
 
+def is_bn_key(key: str) -> bool:
+    # covers running stats and affine params of all BN layers
+    return (
+        ".bn" in key and (
+            key.endswith("running_mean") or
+            key.endswith("running_var") or
+            key.endswith("weight") or
+            key.endswith("bias")
+        )
+    )
+
+def is_gate_key(key: str) -> bool:
+    return key.startswith("gate_fc")
 
 @torch.no_grad()
 def evaluate_client_model(client_model, loader, device):
@@ -580,6 +623,33 @@ def get_client_expert_for_round(client_name, round_idx):
     expert_idx = (round_idx + client_idx) % len(EXPERT_NAMES)
     return EXPERT_NAMES[expert_idx]
 
+def set_gate_trainable(model, trainable: bool):
+    for name, p in model.named_parameters():
+        if name.startswith("gate_fc"):
+            p.requires_grad = trainable
+
+def set_conv_trainable(model, trainable: bool):
+    for name, p in model.named_parameters():
+        if name.startswith("conv"):
+            p.requires_grad = trainable
+
+def set_head_trainable(model, trainable: bool):
+    for name, p in model.named_parameters():
+        if name.startswith("fc"):
+            p.requires_grad = trainable
+
+def freeze_bn_affine(model):
+    for m in model.modules():
+        if isinstance(m, nn.BatchNorm2d):
+            if m.weight is not None:
+                m.weight.requires_grad = False
+            if m.bias is not None:
+                m.bias.requires_grad = False
+
+def is_personalized(key):
+    return "fc" in key or "gate" in key or ".bn" in key
+
+
 def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
     """
     Step 3: In each round, every client trains ALL three experts (path1,path2,path3)
@@ -600,11 +670,11 @@ def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
             client_model = client_info["model"].to(device)
             loader = client_info["loader"]
 
-            print(f"  Round {rnd+1}, training all paths on {client_name}")
+            # print(f"  Round {rnd+1}, training all paths on {client_name}")
 
             # ====== loop over all experts on this client ======
             for path_idx, expert_name in enumerate(EXPERT_NAMES):  # ["path1","path2","path3"]
-                print(f"    {client_name}: training {expert_name}")
+                # print(f"    {client_name}: training {expert_name}")
 
                 # start from the same global state for each expert phase
                 client_model.load_state_dict(global_state)
@@ -666,6 +736,8 @@ def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
                     s = cfg[layer_name]
                     w_key = f"{layer_name}.weight"
                     expert_update[w_key] = cs[w_key][s].clone()
+
+                expert_updates[expert_name].append(expert_update)
 
         # ====== server aggregation: only conv slices for each expert ======
         new_global_state = copy.deepcopy(global_state)
@@ -755,9 +827,12 @@ def federated_head_finetune(path_clients, global_model, device, num_rounds=5):
         keys_to_avg = list(next(iter(client_states.values())).keys())
         num_clients = len(path_clients)
         for key in keys_to_avg:
+            if is_bn_key(key):
+                continue
             new_global_state[key] = sum(client_states[c][key] for c in path_clients.keys()) / num_clients
-
         global_model.load_state_dict(new_global_state)
+
+
         acc = evaluate_model_gpu(global_model, test_loader, device)
         print(f"Head-only fine-tune round {rnd+1} accuracy {acc:.2f}")
 
@@ -828,11 +903,11 @@ def federated_gate_finetune(path_clients, global_model, device, num_rounds=2):
         keys_to_avg = list(next(iter(client_states.values())).keys())
         num_clients = len(path_clients)
         for key in keys_to_avg:
-            new_global_state[key] = sum(
-                client_states[c][key] for c in path_clients.keys()
-            ) / num_clients
-
+            if is_bn_key(key):
+                continue
+            new_global_state[key] = sum(client_states[c][key] for c in path_clients.keys()) / num_clients
         global_model.load_state_dict(new_global_state)
+
         acc = evaluate_model_gpu(global_model, test_loader, device)
         print(f"[Gate-only] fine-tune round {rnd+1} accuracy: {acc:.2f}%")
 
@@ -914,6 +989,69 @@ def print_param_stats(model, phase_name):
         print(f"    Trainable params: {train} ({gratio:.2f}% of {total})")
         print(f"    Frozen params:    {frozen}")
 
+def server_pretrain_gate(model, train_loader, device, num_epochs=5, lam_gate=0.5):
+    model.to(device)
+    model.train()
+    
+    # 1. Configuration
+    set_gate_trainable(model, True)  
+    set_conv_trainable(model, False) 
+    set_head_trainable(model, True)  # Head must be trainable to evaluate the paths
+    freeze_bn_affine(model)
+
+    # 2. Setup Loss Functions
+    criterion_cls = nn.CrossEntropyLoss()
+    criterion_gate = nn.CrossEntropyLoss() # Path routing loss
+
+    gate_params = [p for n, p in model.named_parameters() if 'gate' in n and p.requires_grad]
+    head_params = [p for n, p in model.named_parameters() if n.startswith('fc') and p.requires_grad]
+
+    # 2. Collect any OTHER trainable parameters (to avoid overlap)
+    other_params = [
+        p for n, p in model.named_parameters() 
+        if p.requires_grad 
+        and 'gate' not in n 
+        and not n.startswith('fc')
+    ]
+
+    print(f"Gate params: {len(gate_params)} | Head params: {len(head_params)} | Others: {len(other_params)}")
+
+    # 3. Initialize the optimizer with distinct groups
+    optimizer = torch.optim.Adam([
+        {'params': gate_params,  'lr': 1e-2}, # Higher learning rate for gate
+        {'params': head_params,  'lr': 1e-3}, # Standard learning rate for head
+        {'params': other_params, 'lr': 1e-3}  # Standard learning rate for anything else
+    ])
+
+    for epoch in range(num_epochs):
+        running_loss = 0.0
+        for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            optimizer.zero_grad()
+
+            # 3. Get Targets: Convert labels to Path Indices (0, 1, or 2)
+            # 0-2 -> Path 0 | 3-5 -> Path 1 | 6-9 -> Path 2
+            path_targets = torch.zeros_like(y_batch)
+            path_targets[(y_batch >= 3) & (y_batch <= 5)] = 1
+            path_targets[(y_batch >= 6)] = 2
+
+            # 4. Forward Pass
+            # Ensure your model.forward returns the RAW logits for the gate, 
+            # not the Softmax probabilities, for CrossEntropyLoss to work.
+            logits, gate_logits = model(X_batch, y_batch) 
+            
+            loss_cls = criterion_cls(logits, y_batch)
+            loss_gate = criterion_gate(gate_logits, path_targets)
+
+            # 5. Combined Loss
+            loss = loss_cls + lam_gate * loss_gate
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            
+        print(f"Epoch {epoch+1} Gate Pretrain Loss: {running_loss/len(train_loader):.4f}")
+
 
 # MAIN EXECUTION
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -936,6 +1074,9 @@ summary(strict_cnn, input_size=(BATCH_SIZE, 3, 64, 64))
 # path_accuracies = {}
 
 
+print("\n=== SERVER-SIDE GATE PRETRAINING ===")
+server_pretrain_gate(strict_cnn, train_loader, device, num_epochs=30, lam_gate=0.1)
+
 print("\n=== STRICT PATH FEDERATED LEARNING (DATA SHARDS) ===")
 num_clients = 9
 path_clients = create_data_shard_clients(strict_cnn, device, num_clients=num_clients)
@@ -943,7 +1084,6 @@ path_clients = create_data_shard_clients(strict_cnn, device, num_clients=num_cli
 # print("\n=== STRICT PATH FEDERATED LEARNING (FULL DATA PER CLIENT) ===")
 # num_clients = 9
 # path_clients = create_full_data_clients(strict_cnn, device, num_clients=num_clients)
-
 
 from collections import Counter
 
@@ -973,7 +1113,7 @@ print_client_class_stats(path_clients, train)
 path_accuracies = {}
 NUM_LOCAL_EPOCHS = 10
 CLIENT_LR = 0.0005
-LAMBDA_GATE = 0.0  # strength of class→path gate regularization
+LAMBDA_GATE = 0.1   # strength of class→path gate regularization
 # LAMBDA_GATE = 0.05  # strength of class→path gate regularization
 
 for client_name, client_info in path_clients.items():
@@ -996,10 +1136,10 @@ for client_name, client_info in path_clients.items():
             loss_cls = criterion(logits, y_batch)
 
             # Optional: encourage non-collapsed gate (small entropy bonus)
-            gate_entropy = -(gate_weights * (gate_weights + 1e-8).log()).sum(dim=1).mean()
-            ENTROPY_ALPHA = 1e-3  # small, tune if needed
+            target_paths = class_to_path_target(y_batch, device)   # (B,3)
+            loss_gate = F.mse_loss(gate_weights, target_paths)
 
-            loss = loss_cls - ENTROPY_ALPHA * gate_entropy
+            loss = loss_cls + LAMBDA_GATE * loss_gate
             loss.backward()
             optimizer.step()
 
@@ -1024,6 +1164,8 @@ global_state = copy.deepcopy(client_states[0])
 num_clients = len(client_states)
 for k in global_state.keys():
     # stack tensors and take mean
+    if is_personalized(k):
+        continue
     stacked = torch.stack([cs[k].float() for cs in client_states], dim=0)
     global_state[k] = stacked.mean(dim=0)
 
@@ -1035,10 +1177,10 @@ acc_after_initial_globale_model = evaluate_model_gpu(global_model, test_loader, 
 print(f"Accuracy after INITIAL GLOBAL MODEL: {acc_after_initial_globale_model:.2f}%")
 
 
-print("\n=== FEDERATED GATE-ONLY FINE-TUNING (PRE-EXPERT) ===")
-global_model = federated_gate_finetune(path_clients, global_model, device, num_rounds=2)
-acc_after_gate = evaluate_model_gpu(global_model, test_loader, device)
-print(f"Accuracy after Gate-only pre-fine-tune: {acc_after_gate:.2f}%")
+# print("\n=== FEDERATED GATE-ONLY FINE-TUNING (PRE-EXPERT) ===")
+# global_model = federated_gate_finetune(path_clients, global_model, device, num_rounds=2)
+# acc_after_gate = evaluate_model_gpu(global_model, test_loader, device)
+# print(f"Accuracy after Gate-only pre-fine-tune: {acc_after_gate:.2f}%")
 
 
 print("\n=== FEDERATED EXPERT ROTATION (STEP 3) ===")
