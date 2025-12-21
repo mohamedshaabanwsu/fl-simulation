@@ -17,7 +17,8 @@ import torch.utils.data
 from torchvision import transforms
 from torch.utils.data import Dataset
 
-BATCH_SIZE = 768
+BATCH_SIZE = 512
+# BATCH_SIZE = 768
 baseimgdir = "./input/6/EuroSAT"
 
 load_transform = transforms.Compose([
@@ -311,51 +312,62 @@ class StrictGatedCNN(nn.Module):
         return self.fc3(h)             # (B,num_classes)
 
     def forward(self, x, labels=None, path_name=None):
-        # Gate should see raw pixels; conv trunk should see normalized. [file:252]
+         # 1. Image Preprocessing
         x_raw = x
         x = (x - self.img_mean) / self.img_std
 
         batchsize = x.size(0)
         flat_x = x_raw.view(batchsize, -1)   # <-- gate uses raw pixels
 
-        # ----- gating -----
+        # 2. Gate Input Prep (Same as your original logic)
         if self.training and labels is not None:
-            one_hot = F.one_hot(labels, 10).float()
-            gate_input = torch.cat([flat_x, one_hot], dim=1)
+            onehot = F.one_hot(labels, 10).float()
+            gate_input = torch.cat([flat_x, onehot], dim=1)
             gate_fc1, gate_fc2 = self.gate_fc1_train, self.gate_fc2_train
         else:
             gate_input = flat_x
             gate_fc1, gate_fc2 = self.gate_fc1_inf, self.gate_fc2_inf
 
+        # 3. Gating with Noise Exploration
         gate_logits = F.relu(gate_fc1(gate_input))
-        gate_weights = F.softmax(gate_fc2(gate_logits), dim=1)  # (B,3)
+        raw_scores = gate_fc2(gate_logits) # B, 3
+        
+        if self.training:
+            # Add noise to encourage the model to try paths other than Path2
+            noise = torch.randn_like(raw_scores) * 0.1 
+            gate_weights = F.softmax(raw_scores + noise, dim=1)
+        else:
+            gate_weights = F.softmax(raw_scores, dim=1)
 
-        # ----- explicit path mode (for expert FL) -----
         if path_name is not None:
-            feats = self._forward_blocks(x, path_name=path_name)   # masked convs on all convs
-            cfg_p = self.path_filter_ranges[path_name]
-            f = feats[:, cfg_p['conv4'], :, :]                    # only this path’s conv4 channels
+            # Step 3/4 logic (forced path)
+            feats = self._forward_blocks(x, path_name=path_name)
+            cfgp = self.path_filter_ranges[path_name]
+            f = feats[:, cfgp['conv7'], :, :] # Ensure you use conv7 for consistency
             logits = self._head_from_slice(f)
             return F.log_softmax(logits, dim=1), gate_weights
 
-        # ----- normal global forward: full convs, then slice conv4 and blend -----
-        feats = self._forward_blocks(x, path_name=None)           # full convs
+        # --- TOP-1 GATING LOGIC ---
+        # Find the best expert index for each sample in the batch
+        top1_scores, top1_indices = torch.max(gate_weights, dim=1)
 
-        cfg = self.path_filter_ranges
-        f1 = feats[:, cfg['path1']['conv7'], :, :]
-        f2 = feats[:, cfg['path2']['conv7'], :, :]
-        f3 = feats[:, cfg['path3']['conv7'], :, :]
+        # Initialize zeroed-out logits
+        batch_size = x.size(0)
+        final_logits = torch.zeros(batch_size, 10, device=self.device)
+        
+        # Process only the selected expert for each sample
+        # Note: For efficiency in MoE, we group samples by their selected path
+        feats = self._forward_blocks(x, path_name=None)
+        for i, expert_name in enumerate(['path1', 'path2', 'path3']):
+            mask = (top1_indices == i)
+            if mask.any():
+                cfg = self.path_filter_ranges[expert_name]
+                f_expert = feats[mask][:, cfg['conv7'], :, :]
+                expert_logits = self._head_from_slice(f_expert)
+                # Re-weight by the gate's confidence (optional but common)
+                final_logits[mask] = expert_logits * top1_scores[mask].unsqueeze(1)
 
-        out1 = self._head_from_slice(f1)
-        out2 = self._head_from_slice(f2)
-        out3 = self._head_from_slice(f3)
-
-        w1 = gate_weights[:, 0:1]
-        w2 = gate_weights[:, 1:2]
-        w3 = gate_weights[:, 2:3]
-
-        logits = w1 * out1 + w2 * out2 + w3 * out3
-        return F.log_softmax(logits, dim=1), gate_weights
+        return F.log_softmax(final_logits, dim=1), gate_weights, raw_scores
 
 # HELPER FUNCTIONS
 def evaluate_model_gpu(model, test_loader, device):
@@ -365,7 +377,7 @@ def evaluate_model_gpu(model, test_loader, device):
     with torch.no_grad():
         for X_batch, y_batch in test_loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-            logits, _ = model(X_batch)
+            logits, _, raw_scores = model(X_batch)
             pred = torch.max(logits, 1)[1]
             correct += (pred == y_batch).sum().item()
     return 100. * correct / len(test_loader.dataset)
@@ -525,7 +537,7 @@ def analyze_final_gating(model, test_loader, device):
     with torch.no_grad():
         for X_batch, y_batch in test_loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-            logits, gate_weights = model(X_batch)
+            logits, gate_weights, raw_scores = model(X_batch)
             for i, label in enumerate(y_batch):
                 cls = label.item()
                 class_counts[cls] += 1
@@ -649,6 +661,18 @@ def freeze_bn_affine(model):
 def is_personalized(key):
     return "fc" in key or "gate" in key or ".bn" in key
 
+def load_balancing_loss(gate_weights):
+    # gate_weights: [batch_size, num_experts]
+    # Calculate the importance of each expert (mean probability across batch)
+    importance = gate_weights.mean(dim=0)
+    
+    # Calculate the frequency of expert selection (for Top-1)
+    # This encourages the gate to distribute samples equally
+    num_experts = gate_weights.size(1)
+    target = 1.0 / num_experts
+    
+    # Squared difference from uniform distribution
+    return torch.sum((importance - target)**2)
 
 def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
     """
@@ -710,14 +734,15 @@ def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
                     for X_batch, y_batch in loader:
                         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
 
-                        # gate-based filtering
-                        with torch.no_grad():
-                            _, gate_weights = client_model(X_batch, y_batch)
-                            chosen_paths = gate_weights.argmax(dim=1)  # 0,1,2
+                        # Force experts to see their specific classes during the rotation phase
+                        if expert_name == 'path1':
+                            mask = (y_batch >= 0) & (y_batch <= 2)
+                        elif expert_name == 'path2':
+                            mask = (y_batch >= 3) & (y_batch <= 5)
+                        else: # path3
+                            mask = (y_batch >= 6) & (y_batch <= 9)
 
-                        mask = (chosen_paths == target_idx)
-                        if not mask.any():
-                            continue
+                        if not mask.any(): continue
 
                         X_sub = X_batch[mask]
                         y_sub = y_batch[mask]
@@ -799,7 +824,7 @@ def federated_head_finetune(path_clients, global_model, device, num_rounds=5):
                     X_batch, y_batch = X_batch.to(device), y_batch.to(device)
                     optimizer.zero_grad()
                     # normal gated forward, but gate is frozen
-                    logits, gate_weights = client_model(X_batch)
+                    logits, gate_weights, raw_scores = client_model(X_batch)
                     loss_cls = criterion(logits, y_batch)
                     loss = loss_cls            # no gate loss
                     loss.backward()
@@ -873,11 +898,22 @@ def federated_gate_finetune(path_clients, global_model, device, num_rounds=2):
                     X_batch, y_batch = X_batch.to(device), y_batch.to(device)
                     optimizer.zero_grad()
 
-                    logits, gate_weights = client_model(X_batch)
-                    loss_cls = criterion(logits, y_batch)
-                    gate_entropy = -(gate_weights * (gate_weights + 1e-8).log()).sum(dim=1).mean()
-                    loss = loss_cls - ENTROPY_ALPHA * gate_entropy
+                    logits, gateweights, raw_scores = client_model(X_batch, y_batch)
+                    losscls = criterion(logits, y_batch)
 
+                    # supervised gate loss (same mapping 0–2,3–5,6–9)
+                    target_path_indices = torch.zeros_like(y_batch)
+                    target_path_indices[(y_batch >= 0) & (y_batch <= 2)] = 0
+                    target_path_indices[(y_batch >= 3) & (y_batch <= 5)] = 1
+                    target_path_indices[(y_batch >= 6) & (y_batch <= 9)] = 2
+
+                    loss_gate = F.cross_entropy(raw_scores, target_path_indices)
+
+                    # load balancing term on probabilities
+                    importance = gateweights.mean(dim=0)  # [3]
+                    loss_bal = (importance - (1.0 / 3.0)).pow(2).sum()
+
+                    loss = losscls + 1.0 * loss_gate + 2.0 * loss_bal
                     loss.backward()
                     optimizer.step()
 
@@ -1035,19 +1071,24 @@ def server_pretrain_gate(model, train_loader, device, num_epochs=5, lam_gate=0.5
             path_targets[(y_batch >= 3) & (y_batch <= 5)] = 1
             path_targets[(y_batch >= 6)] = 2
 
-            # 4. Forward Pass
-            # Ensure your model.forward returns the RAW logits for the gate, 
-            # not the Softmax probabilities, for CrossEntropyLoss to work.
-            logits, gate_logits = model(X_batch, y_batch) 
-            
+            # forward now returns (logits, gateweights, rawscores) or you can recompute rawscores
+            logits, gateweights, raw_scores = model(X_batch, y_batch)
             loss_cls = criterion_cls(logits, y_batch)
-            loss_gate = criterion_gate(gate_logits, path_targets)
 
-            # 5. Combined Loss
-            loss = loss_cls + lam_gate * loss_gate
+            # build path indices: 0–2 -> 0, 3–5 -> 1, 6–9 -> 2
+            target_path_indices = torch.zeros_like(y_batch)
+            target_path_indices[(y_batch >= 0) & (y_batch <= 2)] = 0
+            target_path_indices[(y_batch >= 3) & (y_batch <= 5)] = 1
+            target_path_indices[(y_batch >= 6) & (y_batch <= 9)] = 2
+
+            # use raw gate logits for CrossEntropy
+            # if forward doesn’t return rawscores, recompute: rawscores = gatefc2(gatelogits)
+            # (you already have rawscores in forward in this version [file:39])
+            loss_gate = F.cross_entropy(raw_scores, target_path_indices)
+
+            loss = loss_cls + 1.0 * loss_gate
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item()
             
         print(f"Epoch {epoch+1} Gate Pretrain Loss: {running_loss/len(train_loader):.4f}")
@@ -1075,15 +1116,15 @@ summary(strict_cnn, input_size=(BATCH_SIZE, 3, 64, 64))
 
 
 print("\n=== SERVER-SIDE GATE PRETRAINING ===")
-server_pretrain_gate(strict_cnn, train_loader, device, num_epochs=30, lam_gate=0.1)
+server_pretrain_gate(strict_cnn, train_loader, device, num_epochs=5, lam_gate=1.0)
 
-# print("\n=== STRICT PATH FEDERATED LEARNING (DATA SHARDS) ===")
-# num_clients = 9
-# path_clients = create_data_shard_clients(strict_cnn, device, num_clients=num_clients)
-
-print("\n=== STRICT PATH FEDERATED LEARNING (FULL DATA PER CLIENT) ===")
+print("\n=== STRICT PATH FEDERATED LEARNING (DATA SHARDS) ===")
 num_clients = 9
-path_clients = create_full_data_clients(strict_cnn, device, num_clients=num_clients)
+path_clients = create_data_shard_clients(strict_cnn, device, num_clients=num_clients)
+
+# print("\n=== STRICT PATH FEDERATED LEARNING (FULL DATA PER CLIENT) ===")
+# num_clients = 9
+# path_clients = create_full_data_clients(strict_cnn, device, num_clients=num_clients)
 
 from collections import Counter
 
@@ -1132,14 +1173,16 @@ for client_name, client_info in path_clients.items():
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             optimizer.zero_grad()
 
-            logits, gate_weights = model(X_batch, y_batch)
-            loss_cls = criterion(logits, y_batch)
+            logits, gateweights, rawscores = model(X_batch, y_batch)
+            losscls = criterion(logits, y_batch)
 
-            # Optional: encourage non-collapsed gate (small entropy bonus)
-            target_paths = class_to_path_target(y_batch, device)   # (B,3)
-            loss_gate = F.mse_loss(gate_weights, target_paths)
+            target_path_indices = torch.zeros_like(y_batch)
+            target_path_indices[(y_batch >= 0) & (y_batch <= 2)] = 0
+            target_path_indices[(y_batch >= 3) & (y_batch <= 5)] = 1
+            target_path_indices[(y_batch >= 6) & (y_batch <= 9)] = 2
 
-            loss = loss_cls + LAMBDA_GATE * loss_gate
+            loss_gate = F.cross_entropy(rawscores, target_path_indices)
+            loss = losscls + 1.0 * loss_gate
             loss.backward()
             optimizer.step()
 
@@ -1181,12 +1224,16 @@ print(f"Accuracy after INITIAL GLOBAL MODEL: {acc_after_initial_globale_model:.2
 
 
 
+# path_clients_temp = copy.deepcopy(path_clients)
+# global_model_temp = copy.deepcopy(global_model)
 
+path_clients_temp = path_clients
+global_model_temp = global_model
 
-# print("\n=== FEDERATED GATE-ONLY FINE-TUNING (PRE-EXPERT) ===")
-# global_model = federated_gate_finetune(path_clients, global_model, device, num_rounds=2)
-# acc_after_gate = evaluate_model_gpu(global_model, test_loader, device)
-# print(f"Accuracy after Gate-only pre-fine-tune: {acc_after_gate:.2f}%")
+print("\n=== FEDERATED GATE-ONLY FINE-TUNING (PRE-EXPERT) ===")
+global_model_temp = federated_gate_finetune(path_clients_temp, global_model_temp, device, num_rounds=2)
+acc_after_gate = evaluate_model_gpu(global_model_temp, test_loader, device)
+print(f"Accuracy after Gate-only pre-fine-tune: {acc_after_gate:.2f}%")
 
 
 print("\n=== FEDERATED EXPERT ROTATION (STEP 3) ===")
