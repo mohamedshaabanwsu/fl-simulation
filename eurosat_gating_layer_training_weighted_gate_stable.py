@@ -98,6 +98,9 @@ EXPERT_CFG = {
         'conv5': slice(0,   171),
         'conv6': slice(0,   171),
         'conv7': slice(0,   171),
+        'conv8': slice(0, 171),
+        'conv9': slice(0, 171),
+        'conv10': slice(0, 171),
     },
     'path2': {
         'conv1': slice(171, 342),
@@ -107,6 +110,9 @@ EXPERT_CFG = {
         'conv5': slice(171, 342),
         'conv6': slice(171, 342),
         'conv7': slice(171, 342),
+        'conv8': slice(171, 342),
+        'conv9': slice(171, 342),
+        'conv10': slice(171, 342),
     },
     'path3': {
         'conv1': slice(342, 512),
@@ -116,6 +122,9 @@ EXPERT_CFG = {
         'conv5': slice(342, 512),
         'conv6': slice(342, 512),
         'conv7': slice(342, 512),
+        'conv8': slice(342, 512),
+        'conv9': slice(342, 512),
+        'conv10': slice(342, 512),
     },
 }
 EXPERT_NAMES = list(EXPERT_CFG.keys())
@@ -158,6 +167,15 @@ class StrictGatedCNN(nn.Module):
         self.conv7 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
         self.bn7   = nn.BatchNorm2d(512)
 
+        self.conv8 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn8   = nn.BatchNorm2d(512)
+
+        self.conv9 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn9   = nn.BatchNorm2d(512)
+
+        self.conv10 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn10   = nn.BatchNorm2d(512)
+
         self.pool_block  = nn.MaxPool2d(2)
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
 
@@ -171,9 +189,9 @@ class StrictGatedCNN(nn.Module):
         self.gate_fc2_inf   = nn.Linear(64, 3)
 
         # ---------- classifier head (shared) ----------
-        self.fc1 = nn.Linear(feat_dim, 1024)   # 512 -> 1024
-        self.fc2 = nn.Linear(1024, 512)
-        self.fc3 = nn.Linear(512, num_classes)
+        self.fc1 = nn.Linear(feat_dim, 2048)
+        self.fc2 = nn.Linear(2048, 1024)
+        self.fc3 = nn.Linear(1024, num_classes)
 
         # ---------- path masks over conv filters ----------
         self._create_path_masks()
@@ -217,6 +235,18 @@ class StrictGatedCNN(nn.Module):
             conv7_mask[cfg['conv7'], cfg['conv6'], :, :] = 1.0
             self.register_buffer(f'conv7_mask_{path_name}', conv7_mask)
 
+            conv8_mask = torch.zeros_like(self.conv8.weight, device=self.device)
+            conv8_mask[cfg['conv8'], cfg['conv7'], :, :] = 1.0
+            self.register_buffer(f'conv8_mask_{path_name}', conv8_mask)
+
+            conv9_mask = torch.zeros_like(self.conv9.weight, device=self.device)
+            conv9_mask[cfg['conv9'], cfg['conv8'], :, :] = 1.0
+            self.register_buffer(f'conv9_mask_{path_name}', conv9_mask)
+
+            conv10_mask = torch.zeros_like(self.conv10.weight, device=self.device)
+            conv10_mask[cfg['conv10'], cfg['conv9'], :, :] = 1.0
+            self.register_buffer(f'conv10_mask_{path_name}', conv10_mask)
+
         self.path_filter_ranges = path_filter_ranges
 
 
@@ -230,6 +260,9 @@ class StrictGatedCNN(nn.Module):
             w5 = self.conv5.weight
             w6 = self.conv6.weight
             w7 = self.conv7.weight
+            w8 = self.conv8.weight
+            w9 = self.conv9.weight
+            w10 = self.conv10.weight
         else:
             conv1_mask = getattr(self, f'conv1_mask_{path_name}')
             conv2_mask = getattr(self, f'conv2_mask_{path_name}')
@@ -238,6 +271,9 @@ class StrictGatedCNN(nn.Module):
             conv5_mask = getattr(self, f'conv5_mask_{path_name}')
             conv6_mask = getattr(self, f'conv6_mask_{path_name}')
             conv7_mask = getattr(self, f'conv7_mask_{path_name}')
+            conv8_mask = getattr(self, f'conv8_mask_{path_name}')
+            conv9_mask = getattr(self, f'conv9_mask_{path_name}')
+            conv10_mask = getattr(self, f'conv10_mask_{path_name}')
 
             w1 = self.conv1.weight * conv1_mask
             w2 = self.conv2.weight * conv2_mask
@@ -246,6 +282,9 @@ class StrictGatedCNN(nn.Module):
             w5 = self.conv5.weight * conv5_mask
             w6 = self.conv6.weight * conv6_mask
             w7 = self.conv7.weight * conv7_mask
+            w8 = self.conv8.weight * conv8_mask
+            w9 = self.conv9.weight * conv9_mask
+            w10 = self.conv10.weight * conv10_mask
 
         # Input: 64x64
         # block1 -> 32x32
@@ -286,6 +325,16 @@ class StrictGatedCNN(nn.Module):
         # block7: stay 2x2 (no pool)
         x = F.conv2d(x, w7, self.conv7.bias, padding=1)
         x = self.bn7(x)
+        x = F.relu(x, inplace=True)
+
+        x = F.conv2d(x, w8, self.conv8.bias, padding=1); 
+        x = self.bn8(x); 
+        x = F.relu(x, inplace=True)
+        x = F.conv2d(x, w9, self.conv9.bias, padding=1); 
+        x = self.bn9(x); 
+        x = F.relu(x, inplace=True)
+        x = F.conv2d(x, w10, self.conv10.bias, padding=1); 
+        x = self.bn10(x); 
         x = F.relu(x, inplace=True)
 
         return x  # (B,512,2,2) -> global_pool -> (B,512,1,1)
@@ -343,9 +392,9 @@ class StrictGatedCNN(nn.Module):
         feats = self._forward_blocks(x, path_name=None)           # full convs
 
         cfg = self.path_filter_ranges
-        f1 = feats[:, cfg['path1']['conv7'], :, :]
-        f2 = feats[:, cfg['path2']['conv7'], :, :]
-        f3 = feats[:, cfg['path3']['conv7'], :, :]
+        f1 = feats[:, cfg['path1']['conv10'], :, :]
+        f2 = feats[:, cfg['path2']['conv10'], :, :]
+        f3 = feats[:, cfg['path3']['conv10'], :, :]
 
         out1 = self._head_from_slice(f1)
         out2 = self._head_from_slice(f2)
@@ -685,7 +734,7 @@ def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
                     param.requires_grad = False
 
                 # train only higher conv layers (or all convs if you prefer)
-                for layer_name in ["conv3", "conv4", "conv5", "conv6", "conv7"]:
+                for layer_name in ["conv3", "conv4", "conv5", "conv6", "conv7", "conv8", "conv9", "conv10"]:
                     layer = getattr(client_model, layer_name)
                     layer.weight.requires_grad = True
 
@@ -733,7 +782,7 @@ def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
                 cs = client_model.state_dict()
                 cfg = EXPERT_CFG[expert_name]
                 expert_update = {}
-                for layer_name in ["conv1", "conv2", "conv3", "conv4", "conv5", "conv6", "conv7"]:
+                for layer_name in ["conv1", "conv2", "conv3", "conv4", "conv5", "conv6", "conv7", "conv8", "conv9", "conv10"]:
                     s = cfg[layer_name]
                     w_key = f"{layer_name}.weight"
                     expert_update[w_key] = cs[w_key][s].clone()
@@ -747,7 +796,7 @@ def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
             if not client_states_list:
                 continue
             cfg = EXPERT_CFG[expert_name]
-            for layer_name in ["conv1", "conv2", "conv3", "conv4", "conv5", "conv6", "conv7"]:
+            for layer_name in ["conv1", "conv2", "conv3", "conv4", "conv5", "conv6", "conv7", "conv8", "conv9", "conv10"]:
                 s = cfg[layer_name]
                 w_key = f"{layer_name}.weight"
                 weight_avg = sum(cs[w_key] for cs in client_states_list) / len(client_states_list)
