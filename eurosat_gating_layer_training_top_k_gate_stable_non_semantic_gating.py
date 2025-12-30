@@ -91,40 +91,58 @@ test_loader  = torch.utils.data.DataLoader(test,  batch_size=BATCH_SIZE, shuffle
 
 EXPERT_CFG = {
     'path1': {
-        'conv1': slice(0,   512),
-        'conv2': slice(0,   512),
-        'conv3': slice(0,   512),
-        'conv4': slice(0,   512),
-        'conv5': slice(0,   512),
-        'conv6': slice(0,   512),
-        'conv7': slice(0,   512),
+        'conv1': slice(0,   171),
+        'conv2': slice(0,   171),
+        'conv3': slice(0,   171),
+        'conv4': slice(0,   171),
+        'conv5': slice(0,   171),
+        'conv6': slice(0,   171),
+        'conv7': slice(0,   171),
         'conv8': slice(0, 171),
         'conv9': slice(0, 171),
         'conv10': slice(0, 171),
+        'conv11': slice(0, 171),
+        'conv12': slice(0, 171),
+        'conv13': slice(0, 171),
+        'conv14': slice(0, 171),
+        'conv15': slice(0, 171),
+        'conv16': slice(0, 171),
     },
     'path2': {
-        'conv1': slice(0,   512),
-        'conv2': slice(0,   512),
-        'conv3': slice(0,   512),
-        'conv4': slice(0,   512),
-        'conv5': slice(0,   512),
-        'conv6': slice(0,   512),
-        'conv7': slice(0,   512),
+        'conv1': slice(171, 342),
+        'conv2': slice(171, 342),
+        'conv3': slice(171, 342),
+        'conv4': slice(171, 342),
+        'conv5': slice(171, 342),
+        'conv6': slice(171, 342),
+        'conv7': slice(171, 342),
         'conv8': slice(171, 342),
         'conv9': slice(171, 342),
         'conv10': slice(171, 342),
+        'conv11': slice(171, 342),
+        'conv12': slice(171, 342),
+        'conv13': slice(171, 342),
+        'conv14': slice(171, 342),
+        'conv15': slice(171, 342),
+        'conv16': slice(171, 342),
     },
     'path3': {
-        'conv1': slice(0,   512),
-        'conv2': slice(0,   512),
-        'conv3': slice(0,   512),
-        'conv4': slice(0,   512),
-        'conv5': slice(0,   512),
-        'conv6': slice(0,   512),
-        'conv7': slice(0,   512),
+        'conv1': slice(342, 512),
+        'conv2': slice(342, 512),
+        'conv3': slice(342, 512),
+        'conv4': slice(342, 512),
+        'conv5': slice(342, 512),
+        'conv6': slice(342, 512),
+        'conv7': slice(342, 512),
         'conv8': slice(342, 512),
         'conv9': slice(342, 512),
         'conv10': slice(342, 512),
+        'conv11': slice(342, 512),
+        'conv12': slice(342, 512),
+        'conv13': slice(342, 512),
+        'conv14': slice(342, 512),
+        'conv15': slice(342, 512),
+        'conv16': slice(342, 512),
     },
 }
 EXPERT_NAMES = list(EXPERT_CFG.keys())
@@ -176,6 +194,24 @@ class StrictGatedCNN(nn.Module):
         self.conv10 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
         self.bn10   = nn.BatchNorm2d(512)
 
+        self.conv11 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn11   = nn.BatchNorm2d(512)
+
+        self.conv12 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn12   = nn.BatchNorm2d(512)
+
+        self.conv13 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn13   = nn.BatchNorm2d(512)
+
+        self.conv14 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn14   = nn.BatchNorm2d(512)
+
+        self.conv15 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn15   = nn.BatchNorm2d(512)
+
+        self.conv16 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
+        self.bn16   = nn.BatchNorm2d(512)
+
         self.pool_block  = nn.MaxPool2d(2)
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
 
@@ -188,22 +224,25 @@ class StrictGatedCNN(nn.Module):
         # self.gate_fc1_inf   = nn.Linear(in_flat, 64)
         # self.gate_fc2_inf   = nn.Linear(64, 3)
 
+        in_flat = 64 * 64 * 3  # For 64x64 EuroSAT images
+
         # TRAIN GATE: 3 Layers + BN for Pixel Noise
         self.gate_fc_train = nn.Sequential(
-            nn.Linear(512 + num_classes, 256),
-            nn.BatchNorm1d(256),
+            nn.Linear(in_flat + num_classes, 512), # Increased hidden size for pixels
+            nn.BatchNorm1d(512),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(512, 128),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.Linear(128, 3)
         )
 
+        # INF GATE: Matching structure
         self.gate_fc_inf = nn.Sequential(
-            nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
+            nn.Linear(in_flat, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(512, 128),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.Linear(128, 3)
@@ -268,6 +307,30 @@ class StrictGatedCNN(nn.Module):
             conv10_mask[cfg['conv10'], cfg['conv9'], :, :] = 1.0
             self.register_buffer(f'conv10_mask_{path_name}', conv10_mask)
 
+            conv11_mask = torch.zeros_like(self.conv11.weight, device=self.device)
+            conv11_mask[cfg['conv11'], cfg['conv10'], :, :] = 1.0
+            self.register_buffer(f'conv11_mask_{path_name}', conv11_mask)
+
+            conv12_mask = torch.zeros_like(self.conv12.weight, device=self.device)
+            conv12_mask[cfg['conv12'], cfg['conv11'], :, :] = 1.0
+            self.register_buffer(f'conv12_mask_{path_name}', conv12_mask)
+
+            conv13_mask = torch.zeros_like(self.conv13.weight, device=self.device)
+            conv13_mask[cfg['conv13'], cfg['conv12'], :, :] = 1.0
+            self.register_buffer(f'conv13_mask_{path_name}', conv13_mask)
+
+            conv14_mask = torch.zeros_like(self.conv14.weight, device=self.device)
+            conv14_mask[cfg['conv14'], cfg['conv13'], :, :] = 1.0
+            self.register_buffer(f'conv14_mask_{path_name}', conv14_mask)
+
+            conv15_mask = torch.zeros_like(self.conv15.weight, device=self.device)
+            conv15_mask[cfg['conv15'], cfg['conv14'], :, :] = 1.0
+            self.register_buffer(f'conv15_mask_{path_name}', conv15_mask)
+
+            conv16_mask = torch.zeros_like(self.conv16.weight, device=self.device)
+            conv16_mask[cfg['conv16'], cfg['conv15'], :, :] = 1.0
+            self.register_buffer(f'conv16_mask_{path_name}', conv16_mask)
+
         self.path_filter_ranges = path_filter_ranges
 
 
@@ -284,6 +347,12 @@ class StrictGatedCNN(nn.Module):
             w8 = self.conv8.weight
             w9 = self.conv9.weight
             w10 = self.conv10.weight
+            w11 = self.conv11.weight
+            w12 = self.conv12.weight
+            w13 = self.conv13.weight
+            w14 = self.conv14.weight
+            w15 = self.conv15.weight
+            w16 = self.conv16.weight
         else:
             conv1_mask = getattr(self, f'conv1_mask_{path_name}')
             conv2_mask = getattr(self, f'conv2_mask_{path_name}')
@@ -295,6 +364,12 @@ class StrictGatedCNN(nn.Module):
             conv8_mask = getattr(self, f'conv8_mask_{path_name}')
             conv9_mask = getattr(self, f'conv9_mask_{path_name}')
             conv10_mask = getattr(self, f'conv10_mask_{path_name}')
+            conv11_mask = getattr(self, f'conv11_mask_{path_name}')
+            conv12_mask = getattr(self, f'conv12_mask_{path_name}')
+            conv13_mask = getattr(self, f'conv13_mask_{path_name}')
+            conv14_mask = getattr(self, f'conv14_mask_{path_name}')
+            conv15_mask = getattr(self, f'conv15_mask_{path_name}')
+            conv16_mask = getattr(self, f'conv16_mask_{path_name}')
 
             w1 = self.conv1.weight * conv1_mask
             w2 = self.conv2.weight * conv2_mask
@@ -306,6 +381,12 @@ class StrictGatedCNN(nn.Module):
             w8 = self.conv8.weight * conv8_mask
             w9 = self.conv9.weight * conv9_mask
             w10 = self.conv10.weight * conv10_mask
+            w11 = self.conv11.weight * conv11_mask
+            w12 = self.conv12.weight * conv12_mask
+            w13 = self.conv13.weight * conv13_mask
+            w14 = self.conv14.weight * conv14_mask
+            w15 = self.conv15.weight * conv15_mask
+            w16 = self.conv16.weight * conv16_mask
 
         # Input: 64x64
         # block1 -> 32x32
@@ -351,11 +432,37 @@ class StrictGatedCNN(nn.Module):
         x = F.conv2d(x, w8, self.conv8.bias, padding=1); 
         x = self.bn8(x); 
         x = F.relu(x, inplace=True)
+
         x = F.conv2d(x, w9, self.conv9.bias, padding=1); 
         x = self.bn9(x); 
         x = F.relu(x, inplace=True)
+
         x = F.conv2d(x, w10, self.conv10.bias, padding=1); 
         x = self.bn10(x); 
+        x = F.relu(x, inplace=True)
+
+        x = F.conv2d(x, w11, self.conv11.bias, padding=1); 
+        x = self.bn11(x); 
+        x = F.relu(x, inplace=True)
+
+        x = F.conv2d(x, w12, self.conv12.bias, padding=1); 
+        x = self.bn12(x); 
+        x = F.relu(x, inplace=True)
+
+        x = F.conv2d(x, w13, self.conv13.bias, padding=1); 
+        x = self.bn13(x); 
+        x = F.relu(x, inplace=True)
+
+        x = F.conv2d(x, w14, self.conv14.bias, padding=1); 
+        x = self.bn14(x); 
+        x = F.relu(x, inplace=True)
+
+        x = F.conv2d(x, w15, self.conv15.bias, padding=1); 
+        x = self.bn15(x); 
+        x = F.relu(x, inplace=True)
+
+        x = F.conv2d(x, w16, self.conv16.bias, padding=1); 
+        x = self.bn16(x); 
         x = F.relu(x, inplace=True)
 
         return x  # (B,512,2,2) -> global_pool -> (B,512,1,1)
@@ -389,19 +496,20 @@ class StrictGatedCNN(nn.Module):
         batchsize = x.size(0)
         flat_x = x_raw.view(batchsize, -1)   # <-- gate uses raw pixels
 
-        # Extract semantic features first
-        with torch.no_grad():
-            feats = self._forward_blocks(x, path_name=None)
-            pooled = self.global_pool(feats).view(batchsize, -1) # 512-dim
-
-        # Now pass pooled features to the gate
+        # 2. Gate Input Prep (Same as your original logic)
         if self.training and labels is not None:
-            one_hot = F.one_hot(labels, 10).float().to(self.device)
-            gate_input = torch.cat([pooled, one_hot], dim=1)
-            raw_scores = self.gate_fc_train(gate_input)
+            onehot = F.one_hot(labels, 10).float()
+            gate_input = torch.cat([flat_x, onehot], dim=1)
+            # gate_fc1, gate_fc2 = self.gate_fc1_train, self.gate_fc2_train
+            raw_scores = self.gate_fc_train(gate_input) # Call Sequential
         else:
-            raw_scores = self.gate_fc_inf(pooled)
+            gate_input = flat_x
+            # gate_fc1, gate_fc2 = self.gate_fc1_inf, self.gate_fc2_inf
+            raw_scores = self.gate_fc_inf(flat_x) # Call Sequential
 
+        # # 3. Gating with Noise Exploration
+        # gate_logits = F.relu(gate_fc1(gate_input))
+        # raw_scores = gate_fc2(gate_logits) # B, 3
         
         if self.training:
             # Add noise to encourage the model to try paths other than Path2
@@ -415,7 +523,7 @@ class StrictGatedCNN(nn.Module):
             # Step 3/4 logic (forced path)
             feats = self._forward_blocks(x, path_name=path_name)
             cfgp = self.path_filter_ranges[path_name]
-            f = feats[:, cfgp['conv10'], :, :]
+            f = feats[:, cfgp['conv16'], :, :]
             logits = self._head_from_slice(f)
             return F.log_softmax(logits, dim=1), gate_weights, None
 
@@ -434,7 +542,7 @@ class StrictGatedCNN(nn.Module):
             mask = (top1_indices == i)
             if mask.any():
                 cfg = self.path_filter_ranges[expert_name]
-                f_expert = feats[mask][:, cfg['conv10'], :, :]
+                f_expert = feats[mask][:, cfg['conv16'], :, :]
                 expert_logits = self._head_from_slice(f_expert)
                 # Re-weight by the gate's confidence (optional but common)
                 final_logits[mask] = expert_logits
@@ -785,7 +893,7 @@ def federated_expert_rotation(path_clients, global_model, device, num_rounds=3):
                 #     layer = getattr(client_model, layer_name)
                 #     layer.weight.requires_grad = True
 
-                expert_layers = [f'conv{i}' for i in range(8, 11)]
+                expert_layers = [f'conv{i}' for i in range(11, 17)]
                 for layer_name in expert_layers:
                     layer = getattr(client_model, layer_name)
                     layer.weight.requires_grad = True
@@ -1311,7 +1419,12 @@ summary(strict_cnn, input_size=(BATCH_SIZE, 3, 64, 64))
 # path_accuracies = {}
 
 
+analyze_final_gating(strict_cnn, test_loader, device)
 
+print("\n=== SERVER-SIDE GATE PRETRAINING ===")
+server_side_gate_pretraining(strict_cnn, train_loader, device, num_epochs=20, lam_gate=1.0)
+
+analyze_final_gating(strict_cnn, test_loader, device)
 
 # Re-enable grads for all params
 for p in strict_cnn.parameters():
@@ -1352,10 +1465,47 @@ print("\n=== CLIENT CLASS STATS ===")
 print_client_class_stats(path_clients, train)
 
 path_accuracies = {}
-NUM_LOCAL_EPOCHS = 15
+NUM_LOCAL_EPOCHS = 3
 CLIENT_LR = 0.0005
 LAMBDA_GATE = 0.1   # strength of class→path gate regularization
 # LAMBDA_GATE = 0.05  # strength of class→path gate regularization
+
+# for client_name, client_info in path_clients.items():
+#     model = client_info['model'].to(device)
+#     loader = client_info['loader']
+#     print(f"Training {client_name} on its local shard (with gate reg)...")
+    
+#     optimizer = torch.optim.Adam(model.parameters(), lr=CLIENT_LR, weight_decay=1e-4)
+#     criterion = nn.CrossEntropyLoss()
+    
+#     WARMUP_EPOCHS = 3  # put this near CLIENT_LR / NUM_LOCAL_EPOCHS
+
+#     for epoch in range(NUM_LOCAL_EPOCHS):
+#         model.train()
+#         for X_batch, y_batch in loader:
+#             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+#             optimizer.zero_grad()
+
+#             logits, gateweights, rawscores = model(X_batch, y_batch)
+#             losscls = criterion(logits, y_batch)
+
+#             target_path_indices = torch.zeros_like(y_batch)
+#             target_path_indices[(y_batch >= 0) & (y_batch <= 2)] = 0
+#             target_path_indices[(y_batch >= 3) & (y_batch <= 5)] = 1
+#             target_path_indices[(y_batch >= 6) & (y_batch <= 9)] = 2
+
+#             loss_gate = F.cross_entropy(rawscores, target_path_indices)
+#             loss = losscls + 0.1 * loss_gate
+#             loss.backward()
+#             optimizer.step()
+
+#         val_acc = evaluate_model_gpu(model, val_loader, device)
+#         print(f"{client_name} epoch {epoch+1}/{NUM_LOCAL_EPOCHS} val accuracy: {val_acc:.2f}%")
+    
+#     # keep test only for final per-client number
+#     path_accuracies[client_name] = evaluate_model_gpu(model, test_loader, device)
+#     print(f"{client_name} final test accuracy: {path_accuracies[client_name]:.2f}%")
+
 
 
 for client_name, client_info in path_clients.items():
@@ -1423,6 +1573,7 @@ for client_name, client_info in path_clients.items():
     print(f"{client_name} final test accuracy: {path_accuracies[client_name]:.2f}%")
 
 
+
 # After local training of all 9 clients
 print("\n=== BUILD INITIAL GLOBAL MODEL BY FEDAVG OVER TRAINED CLIENTS ===")
 # 1) Collect state_dicts from all clients
@@ -1450,14 +1601,6 @@ print(f"Accuracy after INITIAL GLOBAL MODEL: {acc_after_initial_globale_model:.2
 
 
 
-analyze_final_gating(strict_cnn, test_loader, device)
-
-print("\n=== SERVER-SIDE GATE PRETRAINING ===")
-server_side_gate_pretraining(strict_cnn, train_loader, device, num_epochs=20, lam_gate=1.0)
-
-analyze_final_gating(strict_cnn, test_loader, device)
-
-
 # path_clients_temp = copy.deepcopy(path_clients)
 # global_model_temp = copy.deepcopy(global_model)
 
@@ -1469,11 +1612,10 @@ global_model_temp = global_model
 # acc_after_gate = evaluate_model_gpu(global_model_temp, test_loader, device)
 # print(f"Accuracy after Gate-only pre-fine-tune: {acc_after_gate:.2f}%")
 
-# analyze_final_gating(global_model_temp, test_loader, device)
 
 print("\n=== FEDERATED EXPERT ROTATION (STEP 3) ===")
 # global_model = copy.deepcopy(strict_cnn).to(device)
-global_model = federated_expert_rotation(path_clients, global_model, device, num_rounds=15)
+global_model = federated_expert_rotation(path_clients, global_model, device, num_rounds=30)
 
 # normal global eval (uses gate)
 acc_after_experts = evaluate_model_gpu(global_model, test_loader, device)
@@ -1489,19 +1631,11 @@ for p, a in per_expert_acc.items():
     print(f"{p}: {a:.2f}%")
 
 print("\n=== FEDERATED FC FINE-TUNING (STEP 4) ===")
-global_model = federated_head_finetune(path_clients, global_model, device, num_rounds=2)
+global_model = federated_head_finetune(path_clients, global_model, device, num_rounds=1)
 final_acc = evaluate_model_gpu(global_model, test_loader, device)
 print(f"Final global accuracy (after head fine-tune): {final_acc:.2f}%")
 
 analyze_final_gating(global_model, test_loader, device)
-
-print("\n=== FEDERATED GATE-ONLY FINE-TUNING (PRE-EXPERT) ===")
-global_model = federated_gate_finetune(path_clients, global_model, device, num_rounds=2)
-acc_after_gate = evaluate_model_gpu(global_model, test_loader, device)
-print(f"Accuracy after Gate-only pre-fine-tune: {acc_after_gate:.2f}%")
-
-analyze_final_gating(global_model, test_loader, device)
-
 
 print("\n=== COMPLETE FL RESULTS ===")
 for client_name, acc in path_accuracies.items():
